@@ -1,0 +1,12 @@
+{
+  "emailFrom": "info@node-mysql-signup-verification-api.com",
+  "smtpOptions": {
+    "host": "smtp.etherial.email",
+    "port": 587,
+    "auth": {
+      "user": "devin.haley@ethereal.email",
+      "pass": "4nGb64EycWqQz4yJ7B"
+    }
+  },
+  "secret": "MARLOUTADLIPMARLOGALLEGOCHRISTIANJOSEPHRAVANESJONAIDASAL"
+}
