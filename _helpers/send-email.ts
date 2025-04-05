@@ -7,7 +7,7 @@ interface EmailOptions {
   from?: string;
 }
 
-const sendEmail = async ({
+export const sendEmail = async ({
   to,
   subject,
   html,
@@ -16,4 +16,3 @@ const sendEmail = async ({
   const transporter = nodemailer.createTransport(config.smtpOptions);
   await transporter.sendMail({ from, to, subject, html });
 };
-module.exports = sendEmail;
