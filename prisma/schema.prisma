@@ -42,8 +42,8 @@ model RefreshToken {
   revoked         DateTime?
   revokedByIp     String?
   replacedByToken String?
-  isExpired       Boolean
-  isActive        Boolean
+  isExpired       Boolean?
+  isActive        Boolean?
   account         Account   @relation(fields: [accountId], references: [id])
   accountId       Int
 }
