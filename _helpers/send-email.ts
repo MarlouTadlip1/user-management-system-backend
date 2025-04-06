@@ -1,5 +1,6 @@
 import nodemailer from "nodemailer";
-const config = require("config.json");
+const config = require("../config.json");
+
 interface EmailOptions {
   to: string;
   subject: string;
