@@ -1,13 +1,13 @@
-import express from "express";
-import bodyParser from "body-parser";
+import express, { Request, Response } from "express";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import { errorHandler } from "./_middleware/error-handler";
-
+import { router } from "./accounts/accounts.controller";
+import { swaggerRouter } from "./_helpers/swagger";
 const app = express();
 
-app.use(bodyParser.urlencoded({ extended: false }));
-app.use(bodyParser.json());
+app.use(express.urlencoded({ extended: false }));
+app.use(express.json());
 app.use(cookieParser());
 
 app.use(
@@ -19,6 +19,11 @@ app.use(
   })
 );
 
+app.get("/", (req: Request, res: Response) => {
+  res.send("Hello World! This is the server for the accounts API.");
+});
+app.use("/accounts", router);
+app.use("/api-docs", swaggerRouter);
 app.use(errorHandler);
 
 const port =

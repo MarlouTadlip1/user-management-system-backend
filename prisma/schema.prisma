@@ -20,7 +20,7 @@ model Account {
   title             String
   firstName         String
   lastName          String
-  acceptTerms       Boolean?
+  acceptTerms       Boolean
   role              String
   verificationToken String?
   verified          DateTime?
