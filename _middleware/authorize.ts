@@ -10,12 +10,17 @@ interface JwtPayload {
 }
 
 export interface AuthenticatedRequest extends Request {
+  auth?: {
+    id: number;
+    role: string;
+  };
   user?: {
     id: number;
     role: Role;
     ownsToken: (token: string) => boolean;
   };
 }
+
 export function authorize(roles: string[] = []) {
   if (typeof roles === "string") {
     roles = [roles];
@@ -26,32 +31,20 @@ export function authorize(roles: string[] = []) {
     jwt({
       secret: config.secret,
       algorithms: ["HS256"],
-      credentialsRequired: true,
-      getToken: (req) => {
-        // Check for token in Authorization header
-        if (
-          req.headers.authorization &&
-          req.headers.authorization.split(" ")[0] === "Bearer"
-        ) {
-          return req.headers.authorization.split(" ")[1];
-        }
-        return undefined;
-      },
+      requestProperty: "auth", // This tells express-jwt to store the decoded token in req.auth
     }),
 
     // Authorize based on user role
-    async (req: Request, res: Response, next: NextFunction) => {
-      // Type assertion for req.user
-      const payload = (req as any).user as JwtPayload;
-
-      if (!payload || !payload.id) {
+    async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+      // Check if authentication succeeded
+      if (!req.auth?.id) {
         return res
           .status(401)
           .json({ message: "Unauthorized - Invalid token" });
       }
 
       const account = await prisma.account.findUnique({
-        where: { id: payload.id },
+        where: { id: req.auth.id },
         include: { refreshTokens: true },
       });
 
@@ -69,7 +62,7 @@ export function authorize(roles: string[] = []) {
       }
 
       // Attach user to request
-      (req as any).user = {
+      req.user = {
         id: account.id,
         role: account.role as Role,
         ownsToken: (token: string) =>
