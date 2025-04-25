@@ -65,12 +65,12 @@ function authenticate(req: Request, res: Response, next: NextFunction) {
 function register(req: Request, res: Response, next: NextFunction) {
   accountService
     .register(req.body, req.get("origin") || "")
-    .then(() => {
+    .then((verificationToken) => {
       console.log("Registration successful for:", req.body.email);
       res.status(201).json({
         success: true,
         message:
-          "Registration successful. Please check your email for verification.",
+          "Registration successful. Please check your email for verification.", verificationToken
       });
     })
     .catch((error) => {

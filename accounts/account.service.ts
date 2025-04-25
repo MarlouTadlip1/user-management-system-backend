@@ -120,6 +120,7 @@ async function register(params: RegisterParams, origin: string) {
   });
 
   await sendVerificationEmail(account, origin);
+  return verificationToken;
 }
 
 async function verifyEmail(token: string) {
