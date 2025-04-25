@@ -71,18 +71,6 @@ The User Management System is a full-stack application developed using Node.js (
   - Registration and email verification
   - Login and authentication
 
-## Contributing
-
-Follow the Git and GitHub workflow outlined in the project guidelines.
-
-### Best Practices:
-
-- **Commit Often**: Make small, frequent commits with clear messages to track progress.
-- **Use Descriptive Branch Names**: Name branches based on their purpose (e.g., `frontend-signup-auth`).
-- **Review Code Before Merging**: Always review pull requests to ensure code quality.
-- **Keep Branches Updated**: Regularly pull changes from `main` to avoid large conflicts.
-- **Communicate with Your Team**: Use GitHub issues or comments to discuss tasks and updates.
-
 ## License
 
 MIT License
