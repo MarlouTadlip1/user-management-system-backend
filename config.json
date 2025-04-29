@@ -3,9 +3,10 @@
   "smtpOptions": {
     "host": "smtp.ethereal.email",
     "port": 587,
+    "secure": false,
     "auth": {
-      "user": "vada38@ethereal.email",
-      "pass": "S7SdaPa65U9W4GzwZE"
+      "user": "chris.prosacco@ethereal.email",
+      "pass": "bxC24N52suFb5xMeRY"
     }
   },
   "secret": "MARLOUTADLIPMARLOGALLEGOCHRISTIANJOSEPHRAVANESJONAIDASAL"
