@@ -15,9 +15,16 @@ router.use(express.json());
 router.use(express.urlencoded({ extended: true }));
 
 router.post("/authenticate", authenticateSchema, authenticate);
+router.post("/refresh-token", refreshToken);
+//router.post("/revoke-token", authorize(), revokeTokenSchema, revokeToken);
 router.post("/register", registerSchema, register);
 router.post("/verify-email", verifyEmailSchema, verifyEmail);
 router.post("/forgot-password", forgotPasswordSchema, forgotPassword);
+router.post(
+  "/validate-reset-token",
+  validateResetTokenSchema,
+  validateResetToken
+);
 router.post("/reset-password", resetPasswordSchema, resetPassword);
 router.get("/", authorize([Role.Admin]), getAll);
 router.get("/:id", authorize(), getById);
@@ -65,12 +72,13 @@ function authenticate(req: Request, res: Response, next: NextFunction) {
 function register(req: Request, res: Response, next: NextFunction) {
   accountService
     .register(req.body, req.get("origin") || "")
-    .then(() => {
+    .then((verificationToken) => {
       console.log("Registration successful for:", req.body.email);
       res.status(201).json({
         success: true,
         message:
           "Registration successful. Please check your email for verification.",
+        verificationToken,
       });
     })
     .catch((error) => {
@@ -225,5 +233,72 @@ function resetPassword(req: Request, res: Response, next: NextFunction) {
         message: "Password reset successful, you can now login",
       })
     )
+    .catch(next);
+}
+
+function refreshToken(req: Request, res: Response, next: NextFunction) {
+  const token = req.cookies.refreshToken;
+  const ipAddress = req.ip ?? "";
+  accountService
+    .refreshToken({ token, ipAddress })
+    .then(({ refreshToken, ...account }) => {
+      setTokenCookie(res, refreshToken);
+      res.json(account);
+    })
+    .catch(next);
+}
+
+function setTokenCookie(res: Response, token: string | null) {
+  const cookieOptions = {
+    httpOnly: true,
+    expires: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+  };
+  res.cookie("refreshToken", token, cookieOptions);
+}
+
+function revokeTokenSchema(req: Request, res: Response, next: NextFunction) {
+  const schema = Joi.object({
+    token: Joi.string().empty(""),
+  });
+  validateRequest(req, next, schema);
+}
+
+function revokeToken(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) {
+  const token = req.body.token || req.cookies.refreshToken;
+  const ipAddress = req.ip ?? "";
+
+  if (!token) {
+    return res.status(400).json({ message: "Token is required" });
+  }
+
+  if (!req.user?.ownsToken(token) && req.user?.role !== Role.Admin) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  accountService
+    .revokeToken({ token, ipAddress })
+    .then(() => res.json({ message: "Token revoked successfully" }))
+    .catch(next);
+}
+
+function validateResetTokenSchema(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  const schema = Joi.object({
+    token: Joi.string().required(),
+  });
+  validateRequest(req, next, schema);
+}
+
+function validateResetToken(req: Request, res: Response, next: NextFunction) {
+  accountService
+    .validateResetToken(req.body.token)
+    .then(() => res.json({ message: "Token is valid" }))
     .catch(next);
 }

@@ -6,6 +6,7 @@ import { prisma } from "../db/prisma";
 import { sendEmail } from "../_helpers/send-email";
 import { Account } from "@prisma/client";
 import { Role } from "../_helpers/role";
+import { ref } from "process";
 
 interface AuthenticateParams {
   email: string;
@@ -62,6 +63,8 @@ export const accountService = {
   create,
   update,
   delete: _delete,
+  refreshToken,
+  revokeToken,
 };
 
 async function authenticate({
@@ -120,6 +123,7 @@ async function register(params: RegisterParams, origin: string) {
   });
 
   await sendVerificationEmail(account, origin);
+  return verificationToken;
 }
 
 async function verifyEmail(token: string) {
@@ -192,12 +196,13 @@ async function sendAlreadyRegisteredEmail(email: string, origin: string) {
 }
 
 async function sendVerificationEmail(account: Account, origin: string) {
-  const message = `Please use the below token to verify your email address with the /accounts/verify-email API route.`;
+  const message = `Please use the link below to verify your account`;
   const token = account.verificationToken;
+  const link = `${origin}/account/verify-email?token=${token}`;
   await sendEmail({
     to: account.email,
     subject: "Verify Email",
-    html: `<p>${message}</p><p>${token}</p>`,
+    html: `<p>${message}</p><a href=${link}>${link}</a>`,
   });
 }
 
@@ -343,6 +348,63 @@ function generateRefreshToken(account: Account, ipAddress: string) {
       accountId: account.id,
       isActive: true,
       isExpired: false,
+    },
+  });
+}
+
+async function refreshToken({
+  token,
+  ipAddress,
+}: {
+  token: string;
+  ipAddress: string;
+}) {
+  const refreshToken = await prisma.refreshToken.findFirst({
+    where: { token },
+    include: { account: true },
+  });
+  const account = refreshToken?.account;
+
+  if (!account) throw "Account not found";
+  const newRefreshToken = generateRefreshToken(account, ipAddress);
+  refreshToken.revoked = new Date(Date.now());
+  refreshToken.revokedByIp = ipAddress;
+  refreshToken.replacedByToken = (await newRefreshToken).token;
+  await prisma.refreshToken.update({
+    where: { id: refreshToken.id },
+    data: {
+      token: refreshToken.token,
+      revoked: refreshToken.revoked,
+      revokedByIp: refreshToken.revokedByIp,
+      replacedByToken: refreshToken.replacedByToken,
+    },
+  });
+  const jwtToken = generateJwtToken(account);
+  return {
+    ...basicDetails(account),
+    jwtToken,
+    refreshToken: (await newRefreshToken).token,
+  };
+}
+
+async function revokeToken({
+  token,
+  ipAddress,
+}: {
+  token: string;
+  ipAddress: string;
+}) {
+  const refreshToken = await prisma.refreshToken.findFirst({
+    where: { token },
+  });
+
+  if (!refreshToken) throw "Token not found";
+
+  await prisma.refreshToken.update({
+    where: { id: refreshToken.id },
+    data: {
+      revoked: new Date(Date.now()),
+      revokedByIp: ipAddress,
     },
   });
 }
