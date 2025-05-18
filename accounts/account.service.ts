@@ -1,4 +1,3 @@
-const config = require("../config.json");
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
@@ -6,7 +5,7 @@ import { prisma } from "../db/prisma";
 import { sendEmail } from "../_helpers/send-email";
 import { Account } from "@prisma/client";
 import { Role } from "../_helpers/role";
-import { ref } from "process";
+const config = require("../config.json");
 
 interface AuthenticateParams {
   email: string;
@@ -21,7 +20,7 @@ interface RegisterParams {
   email: string;
   password: string;
   confirmPassword: string;
-  acceptTerms: boolean;
+  acceptTerms?: boolean;
 }
 
 interface BasicAccountDetails {
@@ -31,12 +30,11 @@ interface BasicAccountDetails {
   lastName: string;
   email: string;
   role: string;
-  created: Date;
-  updated?: Date | null;
+  dateCreated: string;
   isVerified: boolean;
+  isActive: boolean;
 }
 
-// Add these new interfaces
 interface ForgotPasswordParams {
   email: string;
 }
@@ -48,9 +46,9 @@ interface ResetPasswordParams {
 
 interface UpdateAccountParams extends Partial<RegisterParams> {
   role?: string;
+  isActive?: boolean;
 }
 
-// Update the service exports
 export const accountService = {
   authenticate,
   register,
@@ -76,53 +74,71 @@ async function authenticate({
     where: { email },
   });
 
-  if (
-    !account ||
-    !account.isVerified ||
-    !(await bcrypt.compare(password, account.passwordHash))
-  ) {
-    throw "Account not verified or password is incorrect";
+  if (!account) {
+    throw "Email doesn't exist";
   }
 
-  // Generate JWT token
-  const jwtToken = generateJwtToken(account);
+  if (!account.isActive) {
+    throw "Account is inActive. Please contact system Administrator!";
+  }
 
-  // Generate and save refresh token
+  if (!account.isVerified) {
+    await sendVerificationEmail(account, config.origin);
+    throw "Email is not verified";
+  }
+
+  if (!(await bcrypt.compare(password, account.passwordHash))) {
+    throw "Password is incorrect";
+  }
+
+  const jwtToken = generateJwtToken(account);
   const refreshToken = await generateRefreshToken(account, ipAddress);
 
   return {
     ...basicDetails(account),
     jwtToken,
-    refreshToken: refreshToken.token, // Include the refresh token in the response
+    refreshToken: refreshToken.token,
   };
 }
 
 async function register(params: RegisterParams, origin: string) {
-  // Validate email uniqueness
   if (await prisma.account.findFirst({ where: { email: params.email } })) {
     await sendAlreadyRegisteredEmail(params.email, origin);
-    throw "Email already registered";
+    return; // Prevent email enumeration
   }
-
-  // Remove confirmPassword as we don't store it
-  const { confirmPassword, password, ...accountData } = params;
 
   const isFirstAccount = (await prisma.account.count()) === 0;
   const role = isFirstAccount ? Role.Admin : Role.User;
   const verificationToken = randomTokenString();
   const passwordHash = await hash(params.password);
 
-  const account: Account = await prisma.account.create({
+  const account = await prisma.account.create({
     data: {
-      ...accountData,
+      title: params.title,
+      firstName: params.firstName,
+      lastName: params.lastName,
+      email: params.email,
       passwordHash,
       role,
       verificationToken,
-      isVerified: false,
+      isVerified: isFirstAccount,
+      isActive: true,
+      acceptTerms: params.acceptTerms ?? false,
     },
   });
 
-  await sendVerificationEmail(account, origin);
+  if (!isFirstAccount) {
+    await sendVerificationEmail(account, origin);
+  } else {
+    await sendEmail({
+      to: account.email,
+      subject: "First User Login",
+      html: `
+        <h4>First user login</h4>
+             `,
+    });
+  }
+
   return verificationToken;
 }
 
@@ -131,161 +147,29 @@ async function verifyEmail(token: string) {
     where: { verificationToken: token },
   });
 
-  if (!account) throw "Verification failed";
+  if (!account) {
+    throw "Verification failed";
+  }
 
   await prisma.account.update({
     where: { id: account.id },
     data: {
-      verified: new Date(Date.now()),
-      verificationToken: null,
       isVerified: true,
+      verificationToken: null,
+      verified: new Date(),
     },
   });
 }
 
-function basicDetails(account: Account): BasicAccountDetails {
-  const {
-    id,
-    title,
-    firstName,
-    lastName,
-    email,
-    role,
-    created,
-    updated,
-    verified,
-  } = account;
-  return {
-    id,
-    title,
-    firstName,
-    lastName,
-    email,
-    role,
-    created,
-    updated,
-    isVerified: !!verified,
-  };
-}
-
-function generateJwtToken(account: Account) {
-  return jwt.sign(
-    {
-      id: account.id,
-      role: account.role,
-    },
-    config.secret,
-    {
-      expiresIn: "15m",
-      subject: account.id.toString(),
-    }
-  );
-}
-
-function randomTokenString() {
-  return crypto.randomBytes(40).toString("hex");
-}
-
-async function sendAlreadyRegisteredEmail(email: string, origin: string) {
-  const message = `You have already registered. Please check your email for verification instructions.`;
-  await sendEmail({
-    to: email,
-    subject: "Already Registered",
-    html: `<p>${message}</p>`,
-  });
-}
-
-async function sendVerificationEmail(account: Account, origin: string) {
-  const message = `Please use the link below to verify your account`;
-  const token = account.verificationToken;
-  const link = `${origin}/account/verify-email?token=${token}`;
-  await sendEmail({
-    to: account.email,
-    subject: "Verify Email",
-    html: `<p>${message}</p><a href=${link}>${link}</a>`,
-  });
-}
-
-async function hash(password: string): Promise<string> {
-  return await bcrypt.hash(password, 10);
-}
-
-//CRUD
-async function getAll() {
-  const accounts = await prisma.account.findMany({
-    include: { refreshTokens: true },
-  });
-  return accounts.map((x) => basicDetails(x));
-}
-
-async function getById(id: number) {
-  const account = await prisma.account.findUnique({
-    where: { id },
-    include: { refreshTokens: true },
-  });
-  if (!account) throw "Account not found";
-  return basicDetails(account);
-}
-
-async function create(params: RegisterParams) {
-  // validate
-  if (await prisma.account.findFirst({ where: { email: params.email } })) {
-    throw "Email already registered";
-  }
-
-  // hash password
-  const passwordHash = await hash(params.password);
-
-  // create account
-  const account = await prisma.account.create({
-    data: {
-      ...params,
-      passwordHash,
-      role: Role.User,
-      isVerified: false,
-    },
-  });
-
-  return basicDetails(account);
-}
-
-async function update(id: number, params: Partial<RegisterParams>) {
-  const account = await prisma.account.findUnique({ where: { id } });
-  if (!account) throw "Account not found";
-
-  // validate
-  if (params.email && params.email !== account.email) {
-    if (await prisma.account.findFirst({ where: { email: params.email } })) {
-      throw "Email already registered";
-    }
-  }
-
-  // hash password if it was entered
-  if (params.password) {
-    const passwordHash = await hash(params.password);
-    const updatedParams = { ...params, passwordHash };
-  }
-
-  // update account
-  await prisma.account.update({
-    where: { id },
-    data: params,
-  });
-}
-
-async function _delete(id: number) {
-  await prisma.account.delete({ where: { id } });
-}
-
-// Add these new service methods
 async function forgotPassword(email: string, origin: string) {
   const account = await prisma.account.findFirst({ where: { email } });
 
-  if (!account) return; // Don't reveal if account doesn't exist
+  if (!account) {
+    return; // Prevent email enumeration
+  }
 
-  // Create reset token that expires in 1 hour
   const resetToken = randomTokenString();
-  const resetTokenExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+  const resetTokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
 
   await prisma.account.update({
     where: { id: account.id },
@@ -303,53 +187,102 @@ async function validateResetToken(token: string) {
     },
   });
 
-  if (!account) throw "Invalid or expired token";
-  return account;
+  if (!account) {
+    throw "Invalid token";
+  }
 }
 
 async function resetPassword(token: string, password: string) {
-  const account = await validateResetToken(token);
+  const account = await prisma.account.findFirst({
+    where: {
+      resetToken: token,
+      resetTokenExpires: { gt: new Date() },
+    },
+  });
 
-  // Update password and clear reset token
+  if (!account) {
+    throw "Invalid token";
+  }
+
   await prisma.account.update({
     where: { id: account.id },
     data: {
       passwordHash: await hash(password),
       resetToken: null,
       resetTokenExpires: null,
+      isVerified: true,
       passwordReset: new Date(),
     },
   });
 }
 
-// Add this email helper
-async function sendPasswordResetEmail(account: Account, origin: string) {
-  const message = `Please use the following token to reset your password:`;
-  const resetLink = `${origin}/reset-password?token=${account.resetToken}`;
-
-  await sendEmail({
-    to: account.email,
-    subject: "Reset Password",
-    html: `
-      <p>${message}</p>
-      <p><a href="${resetLink}">Reset Password</a></p>
-      <p>Token: ${account.resetToken}</p>
-      <p>The token is valid for 1 hour.</p>
-    `,
-  });
+async function getAll() {
+  const accounts = await prisma.account.findMany();
+  return accounts.map((x) => basicDetails(x));
 }
 
-function generateRefreshToken(account: Account, ipAddress: string) {
-  return prisma.refreshToken.create({
+async function getById(id: number) {
+  const account = await prisma.account.findUnique({
+    where: { id },
+  });
+  if (!account) {
+    throw "Account not found";
+  }
+  return basicDetails(account);
+}
+
+async function create(params: RegisterParams) {
+  if (await prisma.account.findFirst({ where: { email: params.email } })) {
+    throw `Email ${params.email} is already registered`;
+  }
+
+  const passwordHash = await hash(params.password);
+  const account = await prisma.account.create({
     data: {
-      token: randomTokenString(),
-      createdByIp: ipAddress,
-      expires: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
-      accountId: account.id,
+      title: params.title,
+      firstName: params.firstName,
+      lastName: params.lastName,
+      email: params.email,
+      passwordHash,
+      role: Role.User,
+      isVerified: true, // Admin-created accounts are verified
       isActive: true,
-      isExpired: false,
+      acceptTerms: params.acceptTerms ?? false,
     },
   });
+
+  return basicDetails(account);
+}
+
+async function update(id: number, params: UpdateAccountParams) {
+  const account = await prisma.account.findUnique({ where: { id } });
+  if (!account) {
+    throw "Account not found";
+  }
+
+  if (params.email && params.email !== account.email) {
+    if (await prisma.account.findFirst({ where: { email: params.email } })) {
+      throw `Email ${params.email} is already registered`;
+    }
+  }
+
+  const updateData: any = { ...params };
+  if (params.password) {
+    updateData.passwordHash = await hash(params.password);
+  }
+  delete updateData.password;
+  delete updateData.confirmPassword;
+
+  const updatedAccount = await prisma.account.update({
+    where: { id },
+    data: updateData,
+  });
+
+  return basicDetails(updatedAccount);
+}
+
+async function _delete(id: number) {
+  await prisma.account.delete({ where: { id } });
 }
 
 async function refreshToken({
@@ -360,30 +293,32 @@ async function refreshToken({
   ipAddress: string;
 }) {
   const refreshToken = await prisma.refreshToken.findFirst({
-    where: { token },
+    where: { token, isActive: true, isExpired: false },
     include: { account: true },
   });
-  const account = refreshToken?.account;
 
-  if (!account) throw "Account not found";
-  const newRefreshToken = generateRefreshToken(account, ipAddress);
-  refreshToken.revoked = new Date(Date.now());
-  refreshToken.revokedByIp = ipAddress;
-  refreshToken.replacedByToken = (await newRefreshToken).token;
+  if (!refreshToken || !refreshToken.account) {
+    throw "Invalid refresh token";
+  }
+
+  const account = refreshToken.account;
+  const newRefreshToken = await generateRefreshToken(account, ipAddress);
+
   await prisma.refreshToken.update({
     where: { id: refreshToken.id },
     data: {
-      token: refreshToken.token,
-      revoked: refreshToken.revoked,
-      revokedByIp: refreshToken.revokedByIp,
-      replacedByToken: refreshToken.replacedByToken,
+      revoked: new Date(),
+      revokedByIp: ipAddress,
+      replacedByToken: newRefreshToken.token,
+      isActive: false,
     },
   });
+
   const jwtToken = generateJwtToken(account);
   return {
     ...basicDetails(account),
     jwtToken,
-    refreshToken: (await newRefreshToken).token,
+    refreshToken: newRefreshToken.token,
   };
 }
 
@@ -395,16 +330,101 @@ async function revokeToken({
   ipAddress: string;
 }) {
   const refreshToken = await prisma.refreshToken.findFirst({
-    where: { token },
+    where: { token, isActive: true },
   });
 
-  if (!refreshToken) throw "Token not found";
+  if (!refreshToken) {
+    throw "Token not found";
+  }
 
   await prisma.refreshToken.update({
     where: { id: refreshToken.id },
     data: {
-      revoked: new Date(Date.now()),
+      revoked: new Date(),
       revokedByIp: ipAddress,
+      isActive: false,
     },
+  });
+}
+
+function basicDetails(account: Account): BasicAccountDetails {
+  return {
+    id: account.id,
+    title: account.title,
+    firstName: account.firstName,
+    lastName: account.lastName,
+    email: account.email,
+    role: account.role,
+    dateCreated: account.created.toISOString(),
+    isVerified: !!account.isVerified,
+    isActive: !!account.isActive,
+  };
+}
+
+function generateJwtToken(account: Account) {
+  return jwt.sign({ id: account.id, role: account.role }, config.secret, {
+    expiresIn: "15m",
+    subject: account.id.toString(),
+  });
+}
+
+async function generateRefreshToken(account: Account, ipAddress: string) {
+  return prisma.refreshToken.create({
+    data: {
+      token: randomTokenString(),
+      createdByIp: ipAddress,
+      expires: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+      accountId: account.id,
+      isActive: true,
+      isExpired: false,
+    },
+  });
+}
+
+function randomTokenString() {
+  return crypto.randomBytes(40).toString("hex");
+}
+
+async function hash(password: string): Promise<string> {
+  return await bcrypt.hash(password, 10);
+}
+
+async function sendAlreadyRegisteredEmail(email: string, origin: string) {
+  const resetUrl = `${origin}/account/forgot-password`;
+  await sendEmail({
+    to: email,
+    subject: "Email Already Registered",
+    html: `
+      <h4>Email Already Registered</h4>
+      <p>Your email ${email} is already registered.</p>
+      <p>If you don't know your password please visit the <a href="${resetUrl}">forgot password</a> page.</p>
+    `,
+  });
+}
+
+async function sendVerificationEmail(account: Account, origin: string) {
+  const verifyUrl = `${origin}/account/verify-email?token=${account.verificationToken}`;
+  await sendEmail({
+    to: account.email,
+    subject: "Verification Email",
+    html: `
+      <h4>Verification Email</h4>
+      <p>Thanks for registering!</p>
+      <p>Please click the below link to verify your email address:</p>
+      <p><a href="${verifyUrl}">${verifyUrl}</a></p>
+    `,
+  });
+}
+
+async function sendPasswordResetEmail(account: Account, origin: string) {
+  const resetUrl = `${origin}/account/reset-password?token=${account.resetToken}`;
+  await sendEmail({
+    to: account.email,
+    subject: "Reset Password Email",
+    html: `
+      <h4>Reset Password Email</h4>
+      <p>Please click the below link to reset your password, the link will be valid for 1 day:</p>
+      <p><a href="${resetUrl}">${resetUrl}</a></p>
+    `,
   });
 }
