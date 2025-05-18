@@ -4,6 +4,10 @@ import cors from "cors";
 import { errorHandler } from "./_middleware/error-handler";
 import { router } from "./accounts/accounts.controller";
 import { swaggerRouter } from "./_helpers/swagger";
+import employeesRouter from "./employees/index";
+import departmentsRouter from "./departments/index";
+import workflowsRouter from "./workflows/index";
+import requestRouter from "./requests/index";
 const app = express();
 
 app.use(express.urlencoded({ extended: false }));
@@ -23,6 +27,11 @@ app.get("/", (req: Request, res: Response) => {
 });
 app.use("/accounts", router);
 app.use("/api-docs", swaggerRouter);
+app.use("/employees", employeesRouter);
+app.use("/departments", departmentsRouter);
+app.use("/workflows", workflowsRouter);
+app.use("/requests", requestRouter);
+
 app.use(errorHandler);
 
 const port =
